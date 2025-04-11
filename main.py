@@ -13,6 +13,9 @@ class Client(commands.Bot):
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
+        status = discord.Activity(type=discord.ActivityType.playing, name="Feeding the birds")
+        await self.change_presence(activity = status)
+
         try:
             guild = discord.Object(id=286827966783029248)
             synced = await self.tree.sync(guild=guild)
@@ -43,13 +46,13 @@ client = Client(command_prefix="!", intents=intents)
 
 GUILD_ID = discord.Object(id=286827966783029248)
 
-async def leave(voice_client, message):
-    await message.delete()
-
+async def leave(voice_client, error):
+    if error:
+        print(f'Error: {error}')
     await voice_client.disconnect()
 
-def after_played(voice_client, message):
-    asyncio.run_coroutine_threadsafe(leave(voice_client, message), client.loop)
+def after_played(voice_client):
+    asyncio.run_coroutine_threadsafe(leave(voice_client, None), client.loop)
 
 @client.tree.command(name="soundboard", description="Play a sound", guild=GUILD_ID)
 async def join(ctx, filename: str):
@@ -73,9 +76,9 @@ async def join(ctx, filename: str):
             return
         
         audio_source = discord.FFmpegPCMAudio(file_path)
-        message = await ctx.response.send_message(f'Playing "{filename}"')
+        #message = await ctx.response.send_message(f'Playing "{filename}"')
 
-        voice_client.play(audio_source, after=lambda e: after_played(voice_client, message))
+        voice_client.play(audio_source, after=lambda e: after_played(voice_client))
 
 @client.tree.command(name="list", description="Display all playable sounds", guild=GUILD_ID)
 async def list(ctx):
