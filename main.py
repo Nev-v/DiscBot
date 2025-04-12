@@ -9,11 +9,15 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 
 from ghp import const # type: ignore
 
+#GLOBAL VARIABLES
+queue = []
+
 class Client(commands.Bot):
     async def on_ready(self):
         print(f'Logged on as {self.user}!')
 
-        status = discord.Activity(type=discord.ActivityType.playing, name="Feeding the birds")
+
+        status = discord.Activity(type=discord.ActivityType.playing, name="Pirots 3")
         await self.change_presence(activity = status)
 
         try:
@@ -35,7 +39,7 @@ class Client(commands.Bot):
         if after.author.bot:
             return
         
-        if after.content:
+        if not after.embeds:
             await after.channel.send(f'Blod ändrade "{before.content}" till "{after.content}"')
 
 intents = discord.Intents.default()
@@ -45,14 +49,6 @@ intents.message_content = True
 client = Client(command_prefix="!", intents=intents)
 
 GUILD_ID = discord.Object(id=286827966783029248)
-
-async def leave(voice_client, error):
-    if error:
-        print(f'Error: {error}')
-    await voice_client.disconnect()
-
-def after_played(voice_client):
-    asyncio.run_coroutine_threadsafe(leave(voice_client, None), client.loop)
 
 @client.tree.command(name="soundboard", description="Play a sound", guild=GUILD_ID)
 async def join(ctx, filename: str):
@@ -75,10 +71,41 @@ async def join(ctx, filename: str):
             print(f"❌ File not found at: `{file_path}`")
             return
         
-        audio_source = discord.FFmpegPCMAudio(file_path)
-        #message = await ctx.response.send_message(f'Playing "{filename}"')
+        await play(ctx, filename, file_path, voice_client)
+        
 
-        voice_client.play(audio_source, after=lambda e: after_played(voice_client))
+async def play(ctx, filename: str, file_path, voice_client):
+    audio_source = discord.FFmpegPCMAudio(file_path)
+    #message = await ctx.response.send_message(f'Playing "{filename}"')
+    if not voice_client.is_playing():
+            voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx, file_path))
+    else:
+            queue.append(filename)
+            print(f'Added {filename} to queue: {queue}')
+
+def after_played(voice_client, ctx, file_path):
+    asyncio.run_coroutine_threadsafe(leave(voice_client, ctx), client.loop)
+
+async def leave(voice_client, ctx):
+    print(f"{queue}")
+    if len(queue) == 0:
+        await voice_client.disconnect()
+        print("Queue is empty, leaving")
+    else:
+        next_filestr = queue.pop(0)
+        search_pattern = os.path.join(const.audios, f"{next_filestr}.*")
+        matches = glob.glob(search_pattern)
+        file_path = matches[0]
+        await play(ctx, next_filestr, file_path, voice_client)
+
+@client.tree.command(name="skip", description="Skip to next sound, leaves is the are none in queue", guild=GUILD_ID)
+async def skip(ctx):
+    print(f'Skip, up next: {queue}')
+
+    voice_client = ctx.guild.voice_client
+    voice_client.stop()
+    await leave(voice_client, ctx)
+    
 
 @client.tree.command(name="list", description="Display all playable sounds", guild=GUILD_ID)
 async def list(ctx):
