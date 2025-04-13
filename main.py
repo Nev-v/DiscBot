@@ -4,9 +4,9 @@ import sys
 import os
 import asyncio
 import glob
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
 from ghp import const # type: ignore
 
 #GLOBAL VARIABLES
@@ -63,11 +63,11 @@ async def join(ctx, filename: str):
         if not matches:
             await ctx.response.send_message(f"❌ No sound file found for '{filename}'", ephemeral=True)
             return
+        file_path = matches[0]
 
         if voice_client is None or not voice_client.is_connected():
             voice_client = await channel.connect()
 
-        file_path = matches[0]
         if not os.path.isfile(file_path):
             print(f"❌ File not found at: `{file_path}`")
             return
@@ -136,5 +136,45 @@ async def list(ctx):
 
     await ctx.response.send_message(f"**Available sounds:**  {sound_list}")
 
+@client.tree.command(name="leaderboard", description="Leaderboard of server", guild=GUILD_ID)
+async def leaderboard(ctx, top_n: int = 10):
+    data = load_data()
+
+    sorted_users = sorted(data.items(), key=lambda x: x[1].get("Cash", 0), reverse=True)
+
+    leaderboardStr = ""
+    for i, (user_id, info) in enumerate(sorted_users[:top_n], start=1):
+        money = info.get("Cash", 0)
+        user = await client.fetch_user(user_id)
+        leaderboardStr += f"**{i}.** {user.display_name} - {money} Cash\n"
+
+    await ctx.response.send_message(f"**Leaderboard** \n\n{leaderboardStr}")
+
+@client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
+async def casino(interaction: discord.Interaction):
+    checkExist(interaction.user.id)
+
+
+def checkExist(user_id: int):
+    data = load_data()
+    user_id_str = str(user_id)
+
+    if user_id_str not in data:
+        data[user_id_str] = {"Cash": 10, "Level":0}
+        save_data(data)
+
+def load_data():
+    if not os.path.exists(const.data_file):
+        return {}
+    with open(const.data_file, "r") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+def save_data(data):
+    print("Save")
+    with open(const.data_file, "w") as f:
+        json.dump(data, f, indent=4)
 
 client.run(const.token)
