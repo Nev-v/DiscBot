@@ -8,6 +8,7 @@ import asyncio
 import glob
 import json
 import datetime
+from datetime import datetime
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from ghp import const # type: ignore
@@ -158,6 +159,26 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
 
     await ctx.response.send_message(f"**Leaderboard** \n\n{leaderboardStr}")
 
+@client.tree.command(name="work", description="Work for money", guild=GUILD_ID)
+async def work(interaction: discord.Interaction):
+    checkExist(interaction.user.id)
+    user_id = str(interaction.user.id)
+    data = load_data()
+
+    now_str = datetime.now().strftime('%y-%m-%d')
+    now = datetime.strptime(now_str, '%y-%m-%d')
+
+    saved_date_str = data[user_id]["Work"]
+    saved_date = datetime.strptime(saved_date_str, '%y-%m-%d')
+    if now > saved_date:
+        data[user_id]["Work"] = now_str
+        data[user_id]["Cash"] += 10
+        save_data(data)
+        await interaction.response.send_message("You earned 10 cash!", ephemeral=True)
+    else:
+        await interaction.response.send_message("You have already worked today!", ephemeral=True)
+
+
 @client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
 @app_commands.describe(game="Casino game", bet_color="Pick color", amount="How much would you like to bet?")
 @app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"),])
@@ -192,7 +213,7 @@ def checkExist(user_id: int):
     user_id_str = str(user_id)
 
     if user_id_str not in data:
-        data[user_id_str] = {"Cash": 10, "Level":0, "xp": 0}
+        data[user_id_str] = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01"}
         save_data(data)
 
 def incrementXp(id):
