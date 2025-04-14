@@ -7,6 +7,7 @@ import os
 import asyncio
 import glob
 import json
+import datetime
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from ghp import const # type: ignore
@@ -163,24 +164,28 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
 async def casino(interaction: discord.Interaction, game: app_commands.Choice[str], bet_color: app_commands.Choice[str], amount: int):
     checkExist(interaction.user.id)
 
-    if checkAfford(interaction.user.id, amount):
-        match game.value:
-            case "roulette":
-                n = random.randrange(0, 14)
-                if bet_color.value == "green" and n == 14:
-                    win = amount * 14
-                    updateMoney(interaction.user.id, win)
-                    await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
-                elif bet_color.value == "red" and n <14 and n >= 7:
-                    win = amount * 2
-                    updateMoney(interaction.user.id, win)
-                    await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
-                elif bet_color.value == "black" and n < 7:
-                    win = amount * 2
-                    updateMoney(interaction.user.id, win)
-                    await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
-                else:
-                    await interaction.response.send_message(f"You bet {amount} on {bet_color.value} and lost :(")
+
+    if amount > 0:
+        if checkAfford(interaction.user.id, amount):
+            match game.value:
+                case "roulette":
+                    n = random.randrange(0, 14)
+                    if bet_color.value == "green" and n == 14:
+                        win = amount * 14
+                        updateMoney(interaction.user.id, win)
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
+                    elif bet_color.value == "red" and n <14 and n >= 7:
+                        win = amount * 2
+                        updateMoney(interaction.user.id, win)
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
+                    elif bet_color.value == "black" and n < 7:
+                        win = amount * 2
+                        updateMoney(interaction.user.id, win)
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
+                    else:
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} and lost :(")
+    else:
+        await interaction.response.sen_message(f'You can not bet below 1', ephemeral=True)
    
 def checkExist(user_id: int):
     data = load_data()
