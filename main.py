@@ -2,6 +2,7 @@ import random
 import discord  # type: ignore
 from discord.ext import commands # type: ignore
 from discord import app_commands # type: ignore
+from discord.ui import Button, View # type: ignore
 import sys
 import os
 import asyncio
@@ -16,6 +17,7 @@ from ghp import const # type: ignore
 #GLOBAL VARIABLES
 msg = {}
 queue = []
+fish_is_moving = True
 
 class Client(commands.Bot):
     async def on_ready(self):
@@ -128,7 +130,6 @@ async def skip(ctx):
     voice_client = ctx.guild.voice_client
     voice_client.stop()
     
-
 @client.tree.command(name="list", description="Display all playable sounds", guild=GUILD_ID)
 async def list(ctx):
     files = os.listdir(const.audios)
@@ -158,6 +159,9 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
         leaderboardStr += f"**{i}.** {user.display_name} - {money} Cash Level {level}\n"
 
     await ctx.response.send_message(f"**Leaderboard** \n\n{leaderboardStr}")
+    msg = await ctx.original_response()
+    await asyncio.sleep(60)
+    await msg.delete()
 
 @client.tree.command(name="work", description="Work for money", guild=GUILD_ID)
 async def work(interaction: discord.Interaction):
@@ -178,42 +182,180 @@ async def work(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You have already worked today!", ephemeral=True)
 
+@client.tree.command(name="fish", description="Reel in some cash", guild=GUILD_ID)
+@app_commands.describe(action="Action", sub_action="Optional action")
+@app_commands.choices(action=[app_commands.Choice(name="Fish", value="fish"), app_commands.Choice(name="Inventory", value="inv"), app_commands.Choice(name="Sell", value="sell")], sub_action=[app_commands.Choice(name="None", value="none"), app_commands.Choice(name="High Risk", value="highrisk")])
+async def angling(interaction: discord.Interaction, action: app_commands.Choice[str], sub_action: app_commands.Choice[str]):
+    checkExist(interaction.user.id)
+
+    fish_common = "🐟"
+    fish_uncommon = "🐠"
+    fish_rare = "🐡"
+    fish_leg = "🐙"
+
+    fish_rarity = {
+        "🐟": "Common",
+        "🐠": "Uncommon",
+        "🐡": "Rare",
+        "🐙": "Legendary"
+    }
+
+    line = "🎣"
+    water = "🟦"
+
+    match action.value:
+        case "fish":
+            emoji = [] 
+            hook_index = const.fish_minigame_width * const.line_length + const.line_x
+            i = 0
+            j = 0
+
+            fish = random.choices([fish_common, fish_uncommon, fish_rare, fish_leg], weights=[100, 50, 20, 5], k=1)[0]
+
+            emoji_str = ""
+            for i in range(const.fish_minigame_height):
+                j = 0
+                for j in range(const.fish_minigame_width):
+                    if i == const.fish_y and j == const.fish_x:
+                        emoji.append(fish)
+                    elif j == const.line_x and i < const.line_length:
+                        emoji.append(line)
+                    else:
+                        emoji.append(water)
+                    j += 1
+                i += 1
+
+            emoji_str = "\n".join(
+                "".join(emoji[i * const.fish_minigame_width:(i + 1) * const.fish_minigame_width])
+                for i in range(const.fish_minigame_height)
+            )
+
+            fish_index = emoji.index(fish)
+            fish_state = Fish(fish_index, fish)
+            view = ReelIn(fish_state, hook_index, interaction.user, fish_rarity)
+
+            await interaction.response.send_message(emoji_str, view=view)
+            msg = await interaction.original_response()
+
+            while fish_state.fish_index - const.fish_y * const.fish_minigame_width > 0 and view.active:
+
+                if fish_state.fish_index % const.fish_minigame_width > 0:
+                    left_weight = (20 + (fish_state.fish_index % const.fish_minigame_width) * 5)^2
+                    right_weight = (100 - (fish_state.fish_index % const.fish_minigame_width) * 5)^2
+
+                    if fish_state.fish_index < ((const.fish_y+1) * const.fish_minigame_width) - 1:
+                        movement = random.choices([-1, 0, 1], weights=[left_weight, 10, right_weight], k=1)[0]
+                    else:
+                        movement = -1
+
+                    new_pos = fish_state.fish_index + movement
+
+                    emoji[fish_state.fish_index], emoji[new_pos] = emoji[new_pos], emoji[fish_state.fish_index]
+
+                    fish_state.fish_index = new_pos
+
+                emoji_str = "\n".join(
+                "".join(emoji[i * const.fish_minigame_width:(i + 1) * const.fish_minigame_width])
+                for i in range(const.fish_minigame_height)
+                )
+
+                await msg.edit(content=emoji_str, view=view)
+
+                await asyncio.sleep(1)
+
+            if not view.active:
+                await asyncio.sleep(10)
+            await msg.delete()
+        case "inv":
+            data = load_data()
+            user_id_str = str(interaction.user.id)
+
+            inv_msg_str = f"**Inventory** \n Common {fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {fish_leg}: {data[user_id_str]["Fish"]["Legendary"]}"
+            await interaction.response.send_message(inv_msg_str)
+            inv_msg = await interaction.original_response()
+            await asyncio.sleep(20)
+            await inv_msg.delete()
+
+class Fish:
+    def __init__(self, fish_index, fish_emoji):
+        self.fish_index = fish_index
+        self.fish_emoji = fish_emoji
+
+class ReelIn(View):
+    def __init__(self, fish_state, hook_index, user, fish_rarity):
+        super().__init__(timeout=15)
+        self.fish_state = fish_state
+        self.hook_index = hook_index
+        self.user = user
+        self.fish_rarity = fish_rarity
+        self.result = None
+        self.active = True
+
+    @discord.ui.button(label="Reel in 🎣", style=discord.ButtonStyle.green)
+    async def reel_in(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.defer()
+        self.active = False
+        button.disabled = True
+        if self.fish_state.fish_index == self.hook_index:
+            self.result = "Caught!"
+            await interaction.edit_original_response(content="🐟 You caught the fish!", view=None)
+            data = load_data()
+            user_id_str = str(self.user.id)
+            rarity = self.fish_rarity.get(self.fish_state.fish_emoji, "Common")
+
+            data[user_id_str]["Fish"][rarity] += 1
+
+            save_data(data)
+        else:
+            self.result = "Missed!"
+            await interaction.edit_original_response(content="💨 The fish got away!", view=None)
+
 
 @client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
 @app_commands.describe(game="Casino game", bet_color="Pick color", amount="How much would you like to bet?")
 @app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"),])
 async def casino(interaction: discord.Interaction, game: app_commands.Choice[str], bet_color: app_commands.Choice[str], amount: int):
     checkExist(interaction.user.id)
-
+    eph = True
 
     if amount > 0:
         if checkAfford(interaction.user.id, amount):
             match game.value:
                 case "roulette":
-                    n = random.randrange(0, 14)
-                    if bet_color.value == "green" and n == 14:
-                        win = amount * 14
+                    n = random.randrange(0, 17)
+                    if bet_color.value == "green" and n == 16:
+                        win = amount * 16
+                        if win > 10:
+                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
-                    elif bet_color.value == "red" and n <14 and n >= 7:
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = False)
+                    elif bet_color.value == "red" and n <16 and n >= 9:
                         win = amount * 2
+                        if win > 10:
+                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
-                    elif bet_color.value == "black" and n < 7:
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = eph)
+                    elif bet_color.value == "black" and n < 9:
                         win = amount * 2
+                        if win > 10:
+                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D")
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = eph)
                     else:
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} and lost :(")
+                        if amount > 20:
+                            eph = False
+                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} and lost :(", ephemeral = eph)
+        else:
+            await interaction.response.send_message(f'You are too broke, get a job', ephemeral = True)
     else:
-        await interaction.response.sen_message(f'You can not bet below 1', ephemeral=True)
+        await interaction.response.send_message(f'You can not bet below 1', ephemeral=True)
    
 def checkExist(user_id: int):
     data = load_data()
     user_id_str = str(user_id)
 
     if user_id_str not in data:
-        data[user_id_str] = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01"}
+        data[user_id_str] = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0}}
         save_data(data)
 
 def incrementXp(id):
