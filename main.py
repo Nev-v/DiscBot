@@ -17,7 +17,7 @@ from ghp import const # type: ignore
 #GLOBAL VARIABLES
 msg = {}
 queue = []
-fish_is_moving = True
+loop = False
 
 class Client(commands.Bot):
     async def on_ready(self):
@@ -83,33 +83,37 @@ async def join(ctx, filename: str):
             print(f"❌ File not found at: `{file_path}`")
             return
         
-        await play(ctx, filename, file_path, voice_client)       
+        queue.append(filename)
+        
+        await play(ctx, filename, file_path, voice_client)
 
 async def play(ctx, filename: str, file_path, voice_client):
-    
     audio_source = discord.FFmpegPCMAudio(file_path)
 
     if not voice_client.is_playing():
         if ctx.guild_id in msg:
             try:
                 playMsg = msg[ctx.guild_id]
-                await playMsg.edit(content=f"Now playing: 🎵 {filename}")
+                await playMsg.edit(content=f"Now playing: 🎵 {queue[0]}")
             except discord.NotFound:
                 pass
         else:
-            await ctx.response.send_message(f'Now playing: 🎵 {filename}')
+            await ctx.response.send_message(f'Now playing: 🎵 {queue[0]}')
             playMsg = await ctx.original_response()
             msg[ctx.guild_id] = playMsg
         voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
     else:
-            queue.append(filename)
-            print(f'Added {filename} to queue: {queue}')
+            await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 10)
 
 def after_played(voice_client, ctx):
     asyncio.run_coroutine_threadsafe(leave(voice_client, ctx), client.loop)
 
 async def leave(voice_client, ctx):
     print(f"{queue}")
+    curr_sound = queue.pop(0)
+    if loop:
+        queue.append(curr_sound)
+        print(f"Added {curr_sound} to queue")
     if len(queue) == 0:
         await voice_client.disconnect()
         print("Queue is empty, leaving")
@@ -117,11 +121,13 @@ async def leave(voice_client, ctx):
         if playMsg:
             await playMsg.delete()
     else:
-        next_filestr = queue.pop(0)
-        search_pattern = os.path.join(const.audios, f"{next_filestr}.*")
+        print(f"Current ending sound {curr_sound}")
+        next_sound = queue[0]
+        print(f"Next sound {next_sound}")
+        search_pattern = os.path.join(const.audios, f"{next_sound}.*")
         matches = glob.glob(search_pattern)
         file_path = matches[0]
-        await play(ctx, next_filestr, file_path, voice_client)
+        await play(ctx, next_sound, file_path, voice_client)
 
 @client.tree.command(name="skip", description="Skip to next sound, leaves is the are none in queue", guild=GUILD_ID)
 async def skip(ctx):
@@ -144,6 +150,17 @@ async def list(ctx):
     sound_list = ", ".join(sound_names)
 
     await ctx.response.send_message(f"**Available sounds:**  {sound_list}")
+
+@client.tree.command(name="loop", description="Turn on/off loop for soundboard", guild=GUILD_ID)
+async def doLoop(interaction: discord.Interaction):
+    global loop
+
+    loop = not loop
+
+    if loop:
+        await sendMessageWithExpiration(interaction, "Looping sounds", 30)
+    else:
+        await sendMessageWithExpiration(interaction, "Sounds no longer looped", 30)
 
 @client.tree.command(name="leaderboard", description="Leaderboard", guild=GUILD_ID)
 async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
@@ -326,11 +343,11 @@ async def inventory(interaction: discord.Interaction, user: discord.User = None)
     else:
         user_id_str = str(interaction.user.id)
         user_name = interaction.user.display_name
-    msg = f"**{user_name}'s Inventory** \n Common {const.fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {const.fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {const.fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {const.fish_leg}: {data[user_id_str]["Fish"]["Legendary"]}"
+    msg = f"**{user_name}'s Inventory** \n Cash {const.cash}: {data[user_id_str]["Cash"]} \n *Fish:* \n Common {const.fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {const.fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {const.fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {const.fish_leg}: {data[user_id_str]["Fish"]["Legendary"]} \n *Bait* \n Basic {const.bait_basic}: {data[user_id_str]["Bait"]["Basic Bait"]} \n Advanced {const.bait_advanced}: {data[user_id_str]["Bait"]["Advanced Bait"]} \n Master {const.bait_master}: {data[user_id_str]["Bait"]["Master Bait"]}"
     await sendMessageWithExpiration(interaction, msg, 40)
 
 async def sendMessageWithExpiration(interaction, msg_str, delay):
-    await interaction.response.send_message(msg_str)
+    await interaction.response.send_message(f"{msg_str}")
     msg = await interaction.original_response()
     await asyncio.sleep(delay)
     await msg.delete()
@@ -340,7 +357,6 @@ async def sendMessageWithExpiration(interaction, msg_str, delay):
 @app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"),])
 async def casino(interaction: discord.Interaction, game: app_commands.Choice[str], bet_color: app_commands.Choice[str], amount: int):
     checkExist(interaction.user.id)
-    eph = True
 
     if amount > 0:
         if checkReq(interaction.user.id, amount, "Cash"):
@@ -349,26 +365,18 @@ async def casino(interaction: discord.Interaction, game: app_commands.Choice[str
                     n = random.randrange(0, 17)
                     if bet_color.value == "green" and n == 16:
                         win = amount * 16
-                        if win > 10:
-                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = False)
+                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     elif bet_color.value == "red" and n <16 and n >= 9:
                         win = amount * 2
-                        if win > 10:
-                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = eph)
+                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     elif bet_color.value == "black" and n < 9:
                         win = amount * 2
-                        if win > 10:
-                            eph = False
                         updateMoney(interaction.user.id, win)
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} won {win} cash :D", ephemeral = eph)
+                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     else:
-                        if amount > 20:
-                            eph = False
-                        await interaction.response.send_message(f"You bet {amount} on {bet_color.value} and lost :(", ephemeral = eph)
+                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} lost :(", amount**1.5 + 10)
         else:
             await interaction.response.send_message(f'You are too broke, get a job', ephemeral = True)
     else:
