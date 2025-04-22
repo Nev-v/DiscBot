@@ -1,3 +1,4 @@
+import math
 import random
 import discord  # type: ignore
 from discord.ext import commands # type: ignore
@@ -39,7 +40,7 @@ class Client(commands.Bot):
         if message.author == self.user:
             return
 
-        level_up, level = incrementXp(message.author.id)
+        level_up, level = incrementXp(message.author.id, 1)
 
         if level_up:
             await message.channel.send(f'{message.author.mention} Level up to {level}')
@@ -98,8 +99,7 @@ async def play(ctx, filename: str, file_path, voice_client):
             except discord.NotFound:
                 pass
         else:
-            await ctx.response.send_message(f'Now playing: 🎵 {queue[0]}')
-            playMsg = await ctx.original_response()
+            playMsg = await ctx.channel.send(f"Now playing: 🎵 {queue[0]}")
             msg[ctx.guild_id] = playMsg
         voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
     else:
@@ -183,6 +183,7 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
 @client.tree.command(name="work", description="Work for money", guild=GUILD_ID)
 async def work(interaction: discord.Interaction):
     checkExist(interaction.user.id)
+    incrementXp(interaction.user.id, 30)
     user_id = str(interaction.user.id)
     data = load_data()
 
@@ -193,7 +194,7 @@ async def work(interaction: discord.Interaction):
     saved_date = datetime.strptime(saved_date_str, '%y-%m-%d')
     if now > saved_date:
         data[user_id]["Work"] = now_str
-        data[user_id]["Cash"] += 10
+        data[user_id]["Cash"] += 10 * 2 * data[user_id]["Level"]
         save_data(data)
         await interaction.response.send_message("You earned 10 cash!", ephemeral=True)
     else:
@@ -204,6 +205,7 @@ async def work(interaction: discord.Interaction):
 @app_commands.choices(bait=[app_commands.Choice(name="No Bait", value="nb"), app_commands.Choice(name="Basic Bait", value="bb"), app_commands.Choice(name="Advanced Bait", value="ab"), app_commands.Choice(name="Master Bait", value="mab"), app_commands.Choice(name="Mystery Bait", value="myb")])
 async def angling(interaction: discord.Interaction, bait: app_commands.Choice[str]):
     checkExist(interaction.user.id)
+
 
     fish_rarity = {
         "🐟": "Common",
@@ -324,12 +326,14 @@ class ReelIn(View):
             data = load_data()
             user_id_str = str(self.user.id)
             rarity = self.fish_rarity.get(self.fish_state.fish_emoji, "Common")
+            incrementXp(interaction.user.id, 2)
 
             data[user_id_str]["Fish"][rarity] += 1
 
             save_data(data)
         else:
             self.result = "Missed!"
+            incrementXp(interaction.user.id, 0.2)
             await interaction.edit_original_response(content="💨 The fish got away!", view=None)
 
 @client.tree.command(name="inventory", description="Display a players inventory", guild=GUILD_ID)
@@ -366,14 +370,17 @@ async def casino(interaction: discord.Interaction, game: app_commands.Choice[str
                     if bet_color.value == "green" and n == 16:
                         win = amount * 16
                         updateMoney(interaction.user.id, win)
+                        incrementXp(interaction.user.id, win)
                         await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     elif bet_color.value == "red" and n <16 and n >= 9:
                         win = amount * 2
                         updateMoney(interaction.user.id, win)
+                        incrementXp(interaction.user.id, win)
                         await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     elif bet_color.value == "black" and n < 9:
                         win = amount * 2
                         updateMoney(interaction.user.id, win)
+                        incrementXp(interaction.user.id, win)
                         await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
                     else:
                         await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} lost :(", amount**1.5 + 10)
@@ -523,6 +530,164 @@ class QuantitySelectView(discord.ui.View):
         self.add_item(QuantitySelect(action, category, item, user_id))
 
 
+@client.tree.command(name="adventure", description="Go on an adventure", guild=GUILD_ID)
+async def adventureInit(interaction: discord.Interaction):
+    stage = 0
+    user_health = 100
+    await interaction.response.send_message("Starting adventure...")
+    adv_msg = await interaction.original_response()
+    await adventure(adv_msg, interaction, stage, user_health, False)
+    
+
+async def adventure(adv_msg, interaction, stage, user_health, combat):
+    stage += 1
+    print(stage)
+    data = load_data()
+    user_id = str(interaction.user.id)
+    if not combat:
+        options = []
+        opt_num = random.choices([1, 2, 3], weights=[50, 0 + 50 * data[user_id]["Level"]**(1/4), 0 + 100 * math.log(data[user_id]["Level"], 10) + data[user_id]["Level"]], k=1)[0]
+
+        for i in range(opt_num):
+            options.append(random.choices(["Path", "Enemy", "Boss"], weights=[const.adv_encounters["Path"]["weight"], const.adv_encounters["Enemy"]["weight"] + data[user_id]["Level"], const.adv_encounters["Boss"]["weight"] * data[user_id]["Level"]], k=1)[0])
+        print(options)
+        curr_msg = adventureOptionFrame(options)
+        view = adventureButton(options, adv_msg, stage, user_health)
+    else:
+        curr_msg, enemy = generateCombat(user_id, stage, user_health)
+        view = adventureCombatButtons(adv_msg, stage, enemy, enemy[0]["health"], user_health)
+    await adv_msg.edit(content=curr_msg, view=view)
+
+def adventureOptionFrame(options):
+    num = len(options)
+    match num:
+        case 1:
+            positions = [(const.adv_minigame_height // 2, const.adv_minigame_width // 2)]
+        case 2:
+            positions = [(const.adv_minigame_height // 2, const.adv_minigame_width // 3), (const.adv_minigame_height // 2, 2 * const.adv_minigame_width // 3)]
+        case 3:
+            positions = [(const.adv_minigame_height // 2, const.adv_minigame_width // 4), (const.adv_minigame_height // 2, const.adv_minigame_width // 2), (const.adv_minigame_height // 2, 3 * const.adv_minigame_width // 4)]
+        case _:
+            positions = []
+
+    emoji_pos_map = {positions[i]: const.adv_encounters[options[i]]["emoji"] for i in range(num)}
+            
+    msg = []
+    msg_str = ""
+    for i in range(const.adv_minigame_height):
+        row = []
+        for j in range(const.adv_minigame_width):
+            if (i, j) in emoji_pos_map:
+                row.append(emoji_pos_map[(i, j)])
+            else:
+                row.append(const.grass)
+        
+        msg.append("".join(row))
+    
+    msg_str = "\n".join(msg)
+
+    return msg_str
+
+def generateCombat(id, stage, user_health):
+    data = load_data()
+    user_id = str(id)
+    weights = [100, 100 + data[user_id]["Level"], 20 + data[user_id]["Level"]/2 + data[user_id]["Cash"]]
+    enemy = random.choices(const.adv_encounters["Enemy"]["variants"], weights=weights)
+    enemy_health = enemy[0]["health"] + 1 * stage
+    return adventureCombatFrame(id, enemy, enemy_health, user_health), enemy
+
+
+def adventureCombatFrame(id, enemy, enemy_health, user_health):
+    data = load_data()
+    user_id = str(id)
+    msg = []
+    msg_str = ""
+    for i in range(const.adv_minigame_height):
+        row = []
+        for j in range(const.adv_minigame_width):
+            if i == const.adv_health_y and j >= const.adv_health_x and j < const.adv_health_length + const.adv_health_x:
+                if enemy_health >= (j - const.adv_health_x) * (enemy[0]["health"]/const.adv_health_length):
+                    row.append(const.health)
+                else:
+                    row.append(const.empty_health)
+            elif i >= const.adv_sprite_top and i <= const.adv_sprite_bot and j >= const.adv_sprite_left and j <= const.adv_sprite_right:
+                    sprite_index = (i - const.adv_sprite_top)*(const.adv_sprite_right-const.adv_sprite_left + 1) + j - const.adv_sprite_left
+                    row.append(enemy[0]["sprite"][sprite_index])
+            else:
+                row.append(const.grass)
+        
+        msg.append("".join(row))
+
+    msg.append("".join(f"Your health: {user_health}     {enemy[0]["name"]} health: {enemy_health}"))
+    
+    msg_str = "\n".join(msg)
+
+    return msg_str
+
+async def attack(adv_msg, interaction, stage, enemy, enemy_health, user_health):
+    enemy_health -= const.adv_base_dmg
+    user_health -= enemy[0]["damage"]
+
+    if not enemy_health > 0:
+        incrementXp(interaction.user.id, stage)
+        await adventure(adv_msg, interaction, stage, user_health, False)
+    else:
+        msg = adventureCombatFrame(interaction.user.id, enemy, enemy_health, user_health)
+        view = adventureCombatButtons(adv_msg, stage, enemy, enemy_health, user_health)
+        await adv_msg.edit(content=msg, view=view)
+
+
+class adventureCombatButtons(View):
+    def __init__(self, adv_msg, stage, enemy, enemy_health, user_health):
+        super().__init__(timeout=15)
+        self.adv_msg = adv_msg
+        self.stage = stage
+        self.enemy = enemy
+        self.enemy_health = enemy_health
+        self.user_health = user_health
+
+    @discord.ui.button(label="Attack")
+    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await attack(self.adv_msg, interaction, self.stage, self.enemy, self.enemy_health, self.user_health)
+
+    @discord.ui.button(label="Run")
+    async def run(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await adventure(self.adv_msg, interaction, self.stage, self.user_health, False)
+
+
+class adventureButton(View):
+    def __init__(self, options, msg, stage, user_health):
+        super().__init__(timeout=15)
+        num = len(options)
+        for i in range(num):
+            style = None
+            match options[i]:
+                case "Path":
+                    style = discord.ButtonStyle.green
+                case "Enemy":
+                    style = discord.ButtonStyle.primary
+                case "Boss":
+                    style = discord.ButtonStyle.red
+
+            async def callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.edit_message("E", ephemeral=True)
+            
+            button = discord.ui.Button(
+                    label=f"{options[i]}",
+                    style=style
+                )
+
+            self.set_callback(button, options[i], msg, stage, user_health)
+            self.add_item(button)
+
+    def set_callback(self, button, index, msg, stage, user_health):
+        async def callback(interaction: discord.Interaction):
+            if index == "Path":
+                await adventure(msg, interaction, stage, user_health, False)
+            else:
+                await adventure(msg, interaction, stage, user_health, True)
+        button.callback = callback
+
 def checkExist(user_id: int):
     data = load_data()
     user_id_str = str(user_id)
@@ -541,12 +706,12 @@ def checkExist(user_id: int):
                         data[user_id_str][key][sub_key] = sub_value
     save_data(data)
 
-def incrementXp(id):
+def incrementXp(id, amount):
     checkExist(id)
     data = load_data()
     user_id_str = str(id)
 
-    data[user_id_str]["xp"] += 1
+    data[user_id_str]["xp"] += amount
 
     return checkLevelup(id, data)
 
