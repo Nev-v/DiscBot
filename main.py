@@ -1,5 +1,6 @@
 import math
 import random
+import re
 import discord  # type: ignore
 from discord.ext import commands # type: ignore
 from discord import app_commands # type: ignore
@@ -46,13 +47,6 @@ class Client(commands.Bot):
             await message.channel.send(f'{message.author.mention} Level up to {level}')
         
         await self.process_commands(message)
-        
-    async def on_message_edit(self, before, after):
-        if after.author.bot:
-            return
-        
-        if not after.embeds:
-            await after.channel.send(f'Blod ändrade "{before.content}" till "{after.content}"')
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -356,6 +350,11 @@ async def sendMessageWithExpiration(interaction, msg_str, delay):
     await asyncio.sleep(delay)
     await msg.delete()
 
+async def editMessageWithExpiration(msg, msg_str, delay):
+    await msg.edit(content=msg_str)
+    await asyncio.sleep(delay)
+    await msg.delete()
+
 @client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
 @app_commands.describe(game="Casino game", bet_color="Pick color", amount="How much would you like to bet?")
 @app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"),])
@@ -366,29 +365,70 @@ async def casino(interaction: discord.Interaction, game: app_commands.Choice[str
         if checkReq(interaction.user.id, amount, "Cash"):
             match game.value:
                 case "roulette":
-                    n = random.randrange(0, 17)
-                    if bet_color.value == "green" and n == 16:
-                        win = amount * 16
-                        updateMoney(interaction.user.id, win)
-                        incrementXp(interaction.user.id, win)
-                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
-                    elif bet_color.value == "red" and n <16 and n >= 9:
-                        win = amount * 2
-                        updateMoney(interaction.user.id, win)
-                        incrementXp(interaction.user.id, win)
-                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
-                    elif bet_color.value == "black" and n < 9:
-                        win = amount * 2
-                        updateMoney(interaction.user.id, win)
-                        incrementXp(interaction.user.id, win)
-                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} won {win} cash :D", win**1.5 + 10)
-                    else:
-                        await sendMessageWithExpiration(interaction, f"You bet {amount} on {bet_color.value} lost :(", amount**1.5 + 10)
+                    await roulette(interaction, bet_color, amount)
         else:
             await interaction.response.send_message(f'You are too broke, get a job', ephemeral = True)
     else:
         await interaction.response.send_message(f'You can not bet below 1', ephemeral=True)
    
+async def roulette(interaction, bet_color, amount):
+    msg_str = "Spinning the wheel"
+
+    await interaction.response.send_message(msg_str)
+    msg = await interaction.original_response()
+
+    wheel = const.roulette_wheel
+
+    num = random.randint(16, 31)
+    i = num
+    for _ in range(num):
+        wheel = wheel[-1:] + wheel[:-1]
+        msg_str = await drawWheel(wheel)
+        await msg.edit(content=msg_str)
+        await asyncio.sleep(1/i)
+        i -= 1
+
+    win_emoji = msg_str[2]
+
+    await asyncio.sleep(3)
+
+    n = random.randrange(0, 17)
+    if bet_color.value == "green" and win_emoji == "🟩":
+        win = amount * 10
+        updateMoney(interaction.user.id, win)
+        incrementXp(interaction.user.id, win)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+    elif bet_color.value == "red" and win_emoji == "🟥":
+        win = amount * 2
+        updateMoney(interaction.user.id, win)
+        incrementXp(interaction.user.id, win)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+    elif bet_color.value == "black" and win_emoji == "⬛":
+        win = amount * 2
+        updateMoney(interaction.user.id, win)
+        incrementXp(interaction.user.id, win)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+    else:
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} lost :(", amount + 10)
+
+async def drawWheel(wheel):
+    grid = [["⬜" for _ in range (5)] for _ in range(5)]
+
+    positions = [
+        (0, 0), (0, 1), (0, 2), (0, 3), (0, 4),  # Top row
+        (1, 4), (2, 4), (3, 4),                  # Right column
+        (4, 4), (4, 3), (4, 2), (4, 1), (4, 0),  # Bottom row
+        (3, 0), (2, 0), (1, 0)                   # Left column
+    ]
+
+    for i, (y,x) in enumerate(positions):
+        grid[y][x] = wheel[i]
+
+    grid[1][2] = "🔺"
+
+    return "\n".join("".join(row) for row in grid)
+
+
 @client.tree.command(name="shop", description="Buy or sell items", guild=GUILD_ID)
 async def shop(interaction: discord.Interaction):
     await interaction.response.send_message("Select a category:", view = ActionSelectView(), ephemeral = True)
@@ -529,7 +569,6 @@ class QuantitySelectView(discord.ui.View):
         super().__init__(timeout=30)
         self.add_item(QuantitySelect(action, category, item, user_id))
 
-
 @client.tree.command(name="adventure", description="Go on an adventure", guild=GUILD_ID)
 async def adventureInit(interaction: discord.Interaction):
     stage = 0
@@ -538,7 +577,6 @@ async def adventureInit(interaction: discord.Interaction):
     adv_msg = await interaction.original_response()
     await adventure(adv_msg, interaction, stage, user_health, False)
     
-
 async def adventure(adv_msg, interaction, stage, user_health, combat):
     stage += 1
     print(stage)
@@ -596,7 +634,6 @@ def generateCombat(id, stage, user_health):
     enemy_health = enemy[0]["health"] + 1 * stage
     return adventureCombatFrame(id, enemy, enemy_health, user_health), enemy
 
-
 def adventureCombatFrame(id, enemy, enemy_health, user_health):
     data = load_data()
     user_id = str(id)
@@ -636,7 +673,6 @@ async def attack(adv_msg, interaction, stage, enemy, enemy_health, user_health):
         view = adventureCombatButtons(adv_msg, stage, enemy, enemy_health, user_health)
         await adv_msg.edit(content=msg, view=view)
 
-
 class adventureCombatButtons(View):
     def __init__(self, adv_msg, stage, enemy, enemy_health, user_health):
         super().__init__(timeout=15)
@@ -653,7 +689,6 @@ class adventureCombatButtons(View):
     @discord.ui.button(label="Run")
     async def run(self, interaction: discord.Interaction, button: discord.ui.Button):
         await adventure(self.adv_msg, interaction, self.stage, self.user_health, False)
-
 
 class adventureButton(View):
     def __init__(self, options, msg, stage, user_health):
