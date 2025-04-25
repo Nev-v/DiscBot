@@ -89,15 +89,25 @@ async def play(ctx, filename: str, file_path, voice_client):
         if ctx.guild_id in msg:
             try:
                 playMsg = msg[ctx.guild_id]
-                await playMsg.edit(content=f"Now playing: 🎵 {queue[0]}")
+                msg_str = ""
+                for sound in queue:
+                    msg_str += f"\n {sound}"
+                await playMsg.edit(content=f"Now playing: 🎵 {queue[0]} {msg_str}")
             except discord.NotFound:
                 pass
         else:
-            playMsg = await ctx.channel.send(f"Now playing: 🎵 {queue[0]}")
+            await ctx.response.send_message(f"Now playing: 🎵 {queue[0]}")
+            playMsg = await ctx.original_response()
             msg[ctx.guild_id] = playMsg
         voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
     else:
-            await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 10)
+        await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 5)
+        playMsg = msg[ctx.guild_id]
+        msg_str = ""
+        for sound in queue:
+            msg_str += f"\n {sound}"
+        await playMsg.edit(content=f"Now playing: 🎵 {queue[0]} {msg_str}")
+
 
 def after_played(voice_client, ctx):
     asyncio.run_coroutine_threadsafe(leave(voice_client, ctx), client.loop)
@@ -188,9 +198,9 @@ async def work(interaction: discord.Interaction):
     saved_date = datetime.strptime(saved_date_str, '%y-%m-%d')
     if now > saved_date:
         data[user_id]["Work"] = now_str
-        data[user_id]["Cash"] += 10 * 2 * data[user_id]["Level"]
+        data[user_id]["Cash"] += 10 + 2 * data[user_id]["Level"]
         save_data(data)
-        await interaction.response.send_message("You earned 10 cash!", ephemeral=True)
+        await interaction.response.send_message(f"You earned {10 + 2 * data[user_id]["Level"]} cash!", ephemeral=True)
     else:
         await interaction.response.send_message("You have already worked today!", ephemeral=True)
 
@@ -205,7 +215,8 @@ async def angling(interaction: discord.Interaction, bait: app_commands.Choice[st
         "🐟": "Common",
         "🐠": "Uncommon",
         "🐡": "Rare",
-        "🐙": "Legendary"
+        "🐙": "Legendary",
+        "🦈": "Fabled"
     }
 
     line = "🎣"
@@ -217,22 +228,28 @@ async def angling(interaction: discord.Interaction, bait: app_commands.Choice[st
     j = 0
     match bait.value:
         case "nb":
-            fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg], weights=[8000, 1500, 490, 10], k=1)[0]
+            fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[80000, 15000, 4900, 100-1, 1], k=1)[0]
         case "bb":
             if checkReq(interaction.user.id, 1, "Bait", "Basic Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg], weights=[370, 500, 120, 10], k=1)[0]
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[37000, 50000, 12000, 1000-2, 2], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
         case "ab":
             if checkReq(interaction.user.id, 1, "Bait", "Advanced Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg], weights=[210, 420, 310, 30], k=1)[0]
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[21000, 42000, 31000, 3000-6, 6], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
         case "mab":
             if checkReq(interaction.user.id, 1, "Bait", "Master Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg], weights=[100, 400, 400, 100], k=1)[0]
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[10000-18, 40000, 40000, 10000, 18], k=1)[0]
+            else:
+                await sendMessageWithExpiration(interaction, "You have no bait", 10)
+                return
+        case "myb":
+            if checkReq(interaction.user.id, 1, "Bait", "Mystery Bait"):
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[2500, 2500, 10000, 80000, 5000], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
@@ -332,6 +349,7 @@ class ReelIn(View):
 
 @client.tree.command(name="inventory", description="Display a players inventory", guild=GUILD_ID)
 async def inventory(interaction: discord.Interaction, user: discord.User = None):
+    checkExist(interaction.user.id)
     data = load_data()
     user_id_str = ""
     user_name = ""
@@ -341,7 +359,7 @@ async def inventory(interaction: discord.Interaction, user: discord.User = None)
     else:
         user_id_str = str(interaction.user.id)
         user_name = interaction.user.display_name
-    msg = f"**{user_name}'s Inventory** \n Cash {const.cash}: {data[user_id_str]["Cash"]} \n *Fish:* \n Common {const.fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {const.fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {const.fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {const.fish_leg}: {data[user_id_str]["Fish"]["Legendary"]} \n *Bait* \n Basic {const.bait_basic}: {data[user_id_str]["Bait"]["Basic Bait"]} \n Advanced {const.bait_advanced}: {data[user_id_str]["Bait"]["Advanced Bait"]} \n Master {const.bait_master}: {data[user_id_str]["Bait"]["Master Bait"]}"
+    msg = f"**{user_name}'s Inventory** \n Cash {const.cash}: {data[user_id_str]["Cash"]} \n ***Fish:*** \n Common {const.fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {const.fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {const.fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {const.fish_leg}: {data[user_id_str]["Fish"]["Legendary"]} {f'\n Fabled {const.fish_fab}: {data[user_id_str]["Fish"]["Fabled"]}' if data[user_id_str]["Fish"]["Fabled"] > 0 else ''} \n ***Bait*** \n Basic {const.bait_basic}: {data[user_id_str]["Bait"]["Basic Bait"]} \n Advanced {const.bait_advanced}: {data[user_id_str]["Bait"]["Advanced Bait"]} \n Master {const.bait_master}: {data[user_id_str]["Bait"]["Master Bait"]}"
     await sendMessageWithExpiration(interaction, msg, 40)
 
 async def sendMessageWithExpiration(interaction, msg_str, delay):
@@ -357,11 +375,11 @@ async def editMessageWithExpiration(msg, msg_str, delay):
 
 @client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
 @app_commands.describe(game="Casino game", bet_color="Pick color", amount="How much would you like to bet?")
-@app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"),])
+@app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"), app_commands.Choice(name="Purple", value="purple")])
 async def casino(interaction: discord.Interaction, game: app_commands.Choice[str], bet_color: app_commands.Choice[str], amount: int):
     checkExist(interaction.user.id)
 
-    if amount > 0:
+    if amount >= 10:
         if checkReq(interaction.user.id, amount, "Cash"):
             match game.value:
                 case "roulette":
@@ -369,7 +387,7 @@ async def casino(interaction: discord.Interaction, game: app_commands.Choice[str
         else:
             await interaction.response.send_message(f'You are too broke, get a job', ephemeral = True)
     else:
-        await interaction.response.send_message(f'You can not bet below 1', ephemeral=True)
+        await interaction.response.send_message(f'You can not bet lower than 10', ephemeral=True)
    
 async def roulette(interaction, bet_color, amount):
     msg_str = "Spinning the wheel"
@@ -392,24 +410,35 @@ async def roulette(interaction, bet_color, amount):
 
     await asyncio.sleep(3)
 
-    n = random.randrange(0, 17)
     if bet_color.value == "green" and win_emoji == "🟩":
-        win = amount * 10
+        win = amount * 17
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, win)
+        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     elif bet_color.value == "red" and win_emoji == "🟥":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, win)
+        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     elif bet_color.value == "black" and win_emoji == "⬛":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, win)
+        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+    elif bet_color.value == "purple" and win_emoji == "🟪":
+        rand = random.choices([0, 0.5, 2, 25, 75], weights=[20, 20, 25, 20, 15], k=1)[0]
+        win = amount * rand
+        updateMoney(interaction.user.id, win)
+        incrementXp(interaction.user.id, amount/2)
+        match rand:
+            case 0:
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash D:", win + 10)
+            case 0.5:
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} got {win} back :I", win + 10)
+            case _:
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     else:
-        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} lost :(", amount + 10)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} and lost :(", amount + 10)
 
 async def drawWheel(wheel):
     grid = [["⬜" for _ in range (5)] for _ in range(5)]
@@ -427,7 +456,6 @@ async def drawWheel(wheel):
     grid[1][2] = "🔺"
 
     return "\n".join("".join(row) for row in grid)
-
 
 @client.tree.command(name="shop", description="Buy or sell items", guild=GUILD_ID)
 async def shop(interaction: discord.Interaction):
@@ -489,10 +517,15 @@ class ItemSelect(discord.ui.Select):
 
         options = [discord.SelectOption(
             label = item_name,
-            description = f"{'Cost' if action == "Buy" else 'Sell for'}: {price} cash"
+            description = f"{'Cost' if action == "Buy" else 'Sell for'}: {price} cash",
+            value = item_name
             )
-            for item_name, price in items.items()
+            for item_name, price in items.items() if item_name != "Fabled"
         ]
+
+        if self.action == "Sell" and self.category == "Fish":
+            options.append(discord.SelectOption(label="???", description="Sell ??? for ???", value="Fabled"))
+
         super().__init__(placeholder="Choose an item...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -525,7 +558,7 @@ class QuantitySelect(discord.ui.Select):
         else:
             max_quantity = 0
 
-        quantities = range(1, min(max_quantity, 25) + 1)
+        quantities = range(1, min(int(max_quantity), 25) + 1)
 
         if not quantities:
             options = [discord.SelectOption(label="None Available", value="0")]
@@ -727,7 +760,7 @@ def checkExist(user_id: int):
     data = load_data()
     user_id_str = str(user_id)
 
-    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0}, "Bait": {"Basic Bait": 0, "Advanced Bait": 0, "Master Bait": 0, "Mystery Bait": 0}}
+    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0, "Fabled": 0}, "Bait": {"Basic Bait": 0, "Advanced Bait": 0, "Master Bait": 0, "Mystery Bait": 0}}
 
     if user_id_str not in data:
         data[user_id_str] = default_data
@@ -779,10 +812,10 @@ def updateMoney(id, amount):
 
 def checkLevelup(id, data):
     user_id_str = str(id)
-    reqXp = (data[user_id_str]["Level"] + 1) * 10
+    reqXp = (data[user_id_str]["Level"] + 1) * 10 + pow(2, math.log10(data[user_id_str]["Level"] + 1))
     level_up = False
     level = data[user_id_str]["Level"]
-    if data[user_id_str]["xp"] >= reqXp:
+    while data[user_id_str]["xp"] >= reqXp:
         data[user_id_str]["xp"] -= reqXp
         data[user_id_str]["Level"] += 1
         level_up = True
