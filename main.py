@@ -84,11 +84,11 @@ async def join(ctx, filename: str):
 
 async def play(ctx, filename: str, file_path, voice_client):
     audio_source = discord.FFmpegPCMAudio(file_path)
-
     
     h, m, s = getAudioLength(getAudioPath(queue[0]))
     msg_main = f"Now playing: 🎵 **{queue[0]}** - {h}:{m}:{s}"
     if not voice_client.is_playing():
+        await asyncio.sleep(1) #Make sure bot gets time to start playing
         if ctx.guild_id in msg:
             try:
                 playMsg = msg[ctx.guild_id]
@@ -104,7 +104,11 @@ async def play(ctx, filename: str, file_path, voice_client):
             await ctx.response.send_message(msg_main)
             playMsg = await ctx.original_response()
             msg[ctx.guild_id] = playMsg
-        voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
+
+        try:
+            voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
+        except Exception as e:
+            print(e)
     else:
         await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 5)
         playMsg = msg[ctx.guild_id]
@@ -379,16 +383,34 @@ class ReelIn(View):
 async def inventory(interaction: discord.Interaction, user: discord.User = None):
     checkExist(interaction.user.id)
     data = load_data()
-    user_id_str = ""
-    user_name = ""
+    
     if user:
         user_id_str = str(user.id)
         user_name = user.display_name
     else:
         user_id_str = str(interaction.user.id)
         user_name = interaction.user.display_name
-    msg = f"**{user_name}'s Inventory** \n Cash {const.cash}: {data[user_id_str]["Cash"]} \n ***Fish:*** \n Common {const.fish_common}: {data[user_id_str]["Fish"]["Common"]} \n Uncommon {const.fish_uncommon}: {data[user_id_str]["Fish"]["Uncommon"]} \n Rare {const.fish_rare}: {data[user_id_str]["Fish"]["Rare"]} \n Legendary {const.fish_leg}: {data[user_id_str]["Fish"]["Legendary"]} {f'\n Fabled {const.fish_fab}: {data[user_id_str]["Fish"]["Fabled"]}' if data[user_id_str]["Fish"]["Fabled"] > 0 else ''} \n ***Bait*** \n Basic {const.bait_basic}: {data[user_id_str]["Bait"]["Basic Bait"]} \n Advanced {const.bait_advanced}: {data[user_id_str]["Bait"]["Advanced Bait"]} \n Master {const.bait_master}: {data[user_id_str]["Bait"]["Master Bait"]}"
-    await sendMessageWithExpiration(interaction, msg, 40)
+
+    emb_title = f"**{user_name}'s Inventory**"
+
+    embed = discord.Embed(title=emb_title)
+
+    emb_fish = ""
+    for fish, num in data[user_id_str]["Fish"].items():
+        if fish != "Fabled":
+            rar = getattr(const, f"fish_{fish.lower()}", const.fish_common)
+            emb_fish  += f"\n{fish} {rar}: {num}"
+
+    emb_bait = ""
+    for bait, num in data[user_id_str]["Bait"].items():
+        rar = getattr(const, f"bait_{bait.lower()}", const.bait_basic)
+        emb_bait += f"\n{bait} {rar}: {num}"
+    
+    embed.add_field(name=f"Cash {const.cash}:", value=f"{data[user_id_str]["Cash"]} ¢" or "None", inline=False)
+    embed.add_field(name="\n\n ***Fish:***", value=emb_fish or "None", inline=True)
+    embed.add_field(name="\n\n ***Bait:***", value=emb_bait or "None", inline=True)
+
+    await interaction.response.send_message(embed=embed, delete_after=20)
 
 async def sendMessageWithExpiration(interaction, msg_str, delay):
     await interaction.response.send_message(f"{msg_str}")
@@ -402,12 +424,13 @@ async def editMessageWithExpiration(msg, msg_str, delay):
     await msg.delete()
 
 @client.tree.command(name="casino", description="Casino", guild=GUILD_ID)
+@commands.cooldown(100, 1000, commands.BucketType.user)
 @app_commands.describe(game="Casino game", bet_color="Pick color", amount="How much would you like to bet?")
 @app_commands.choices(game=[app_commands.Choice(name="Roulette", value="roulette"), ], bet_color=[app_commands.Choice(name="Red 🔴", value="red"), app_commands.Choice(name="Black ⚫", value="black"), app_commands.Choice(name="Green 🟢", value="green"), app_commands.Choice(name="Purple", value="purple")])
 async def casino(interaction: discord.Interaction, game: app_commands.Choice[str], bet_color: app_commands.Choice[str], amount: int):
     checkExist(interaction.user.id)
 
-    if amount >= 10:
+    if amount >= 1:
         if checkReq(interaction.user.id, amount, "Cash"):
             match game.value:
                 case "roulette":
@@ -415,7 +438,7 @@ async def casino(interaction: discord.Interaction, game: app_commands.Choice[str
         else:
             await interaction.response.send_message(f'You are too broke, get a job', ephemeral = True)
     else:
-        await interaction.response.send_message(f'You can not bet lower than 10', ephemeral=True)
+        await interaction.response.send_message(f'You can not bet lower than 1', ephemeral=True)
    
 async def roulette(interaction, bet_color, amount):
     msg_str = "Spinning the wheel"
@@ -784,7 +807,7 @@ def checkExist(user_id: int):
     data = load_data()
     user_id_str = str(user_id)
 
-    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0, "Fabled": 0}, "Bait": {"Basic Bait": 0, "Advanced Bait": 0, "Master Bait": 0, "Mystery Bait": 0}}
+    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0, "Fabled": 0}, "Bait": {"Basic": 0, "Advanced": 0, "Master": 0, "Mystery": 0}}
 
     if user_id_str not in data:
         data[user_id_str] = default_data
