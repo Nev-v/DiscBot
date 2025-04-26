@@ -96,7 +96,7 @@ async def play(ctx, filename: str, file_path, voice_client):
                 for i in range(len(queue) - 1):
                     sound = queue[i + 1]
                     h, m, s = getAudioLength(getAudioPath(sound))
-                msg_str += f"\n **{sound}** - {h}:{m}:{s}"
+                    msg_str += f"\n **{sound}** - {h}:{m}:{s}"
                 await playMsg.edit(content=f"{msg_main} \n ***Queue:*** {msg_str}")
             except discord.NotFound:
                 pass
