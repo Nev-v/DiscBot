@@ -1,6 +1,6 @@
 import math
 import random
-import re
+import subprocess
 import discord  # type: ignore
 from discord.ext import commands # type: ignore
 from discord import app_commands # type: ignore
@@ -85,18 +85,23 @@ async def join(ctx, filename: str):
 async def play(ctx, filename: str, file_path, voice_client):
     audio_source = discord.FFmpegPCMAudio(file_path)
 
+    
+    h, m, s = getAudioLength(getAudioPath(queue[0]))
+    msg_main = f"Now playing: 🎵 **{queue[0]}** - {h}:{m}:{s}"
     if not voice_client.is_playing():
         if ctx.guild_id in msg:
             try:
                 playMsg = msg[ctx.guild_id]
                 msg_str = ""
-                for sound in queue:
-                    msg_str += f"\n {sound}"
-                await playMsg.edit(content=f"Now playing: 🎵 {queue[0]} {msg_str}")
+                for i in range(len(queue) - 1):
+                    sound = queue[i + 1]
+                    h, m, s = getAudioLength(getAudioPath(sound))
+                msg_str += f"\n **{sound}** - {h}:{m}:{s}"
+                await playMsg.edit(content=f"{msg_main} \n ***Queue:*** {msg_str}")
             except discord.NotFound:
                 pass
         else:
-            await ctx.response.send_message(f"Now playing: 🎵 {queue[0]}")
+            await ctx.response.send_message(msg_main)
             playMsg = await ctx.original_response()
             msg[ctx.guild_id] = playMsg
         voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
@@ -104,10 +109,33 @@ async def play(ctx, filename: str, file_path, voice_client):
         await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 5)
         playMsg = msg[ctx.guild_id]
         msg_str = ""
-        for sound in queue:
-            msg_str += f"\n {sound}"
-        await playMsg.edit(content=f"Now playing: 🎵 {queue[0]} {msg_str}")
+        for i in range(len(queue) - 1):
+            sound = queue[i + 1]
+            h, m, s = getAudioLength(getAudioPath(sound))
+            msg_str += f"\n **{sound}** - {h}:{m}:{s}"
+        await playMsg.edit(content=f"{msg_main} \n ***Queue:*** {msg_str}")
 
+def getAudioLength(file_path):
+    res = subprocess.run(
+        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    length = float(res.stdout)
+    h = 0
+    m = 0
+    s = 0
+    while length > 3600:
+        h += 1
+        length -= 3600
+    while length > 60:
+        m += 1
+        length -= 60
+    s = math.floor(length)
+    return h, m, s
+
+def getAudioPath(filename):
+    search_pattern = os.path.join(const.audios, f"{filename}.*")
+    matches = glob.glob(search_pattern)
+    sound_path = matches[0]
+    return sound_path
 
 def after_played(voice_client, ctx):
     asyncio.run_coroutine_threadsafe(leave(voice_client, ctx), client.loop)
@@ -135,7 +163,7 @@ async def leave(voice_client, ctx):
 
 @client.tree.command(name="skip", description="Skip to next sound, leaves is the are none in queue", guild=GUILD_ID)
 async def skip(ctx):
-    print(f'Skip, up next: {queue}')
+    await sendMessageWithExpiration(ctx, f"Skipped, next up: {queue}", 5)
 
     voice_client = ctx.guild.voice_client
     voice_client.stop()
@@ -413,23 +441,19 @@ async def roulette(interaction, bet_color, amount):
     if bet_color.value == "green" and win_emoji == "🟩":
         win = amount * 17
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     elif bet_color.value == "red" and win_emoji == "🟥":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     elif bet_color.value == "black" and win_emoji == "⬛":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, amount/2)
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
     elif bet_color.value == "purple" and win_emoji == "🟪":
         rand = random.choices([0, 0.5, 2, 25, 75], weights=[20, 20, 25, 20, 15], k=1)[0]
         win = amount * rand
         updateMoney(interaction.user.id, win)
-        incrementXp(interaction.user.id, amount/2)
         match rand:
             case 0:
                 await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash D:", win + 10)
