@@ -41,10 +41,7 @@ class Client(commands.Bot):
         if message.author == self.user:
             return
 
-        level_up, level = incrementXp(message.author.id, 1)
-
-        if level_up:
-            await message.channel.send(f'{message.author.mention} Level up to {level}')
+        incrementXp(message, 1)
         
         await self.process_commands(message)
 
@@ -83,32 +80,50 @@ async def join(ctx, filename: str):
         await play(ctx, filename, file_path, voice_client)
 
 async def play(ctx, filename: str, file_path, voice_client):
+
+    if not voice_client or not voice_client.is_connected():
+        await sendMessageWithExpiration(ctx, "❌ Bot is not connected to a voice channel", 5)
+        return
+    
+    if not queue:
+        await sendMessageWithExpiration(ctx, "❌ Queue is empty (Coding error somewhere)", 10)
+        return
+
     audio_source = discord.FFmpegPCMAudio(file_path)
     
-    h, m, s = getAudioLength(getAudioPath(queue[0]))
-    msg_main = f"Now playing: 🎵 **{queue[0]}** - {h}:{m}:{s}"
+    try:
+        h, m, s = getAudioLength(getAudioPath(queue[0]))
+        msg_main = f"Now playing: 🎵 **{queue[0]}** - {h}:{m}:{s}           Loop: {" On" if loop else " Off"}"
+    except:
+        msg_main = f"Now playing: 🎵 **{queue[0]}**"
+
     if not voice_client.is_playing():
+        voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
+
         await asyncio.sleep(1) #Make sure bot gets time to start playing
+
         if ctx.guild_id in msg:
             try:
                 playMsg = msg[ctx.guild_id]
                 msg_str = ""
                 for i in range(len(queue) - 1):
                     sound = queue[i + 1]
-                    h, m, s = getAudioLength(getAudioPath(sound))
-                    msg_str += f"\n **{sound}** - {h}:{m}:{s}"
+                    try:
+                        h, m, s = getAudioLength(getAudioPath(sound))
+                        msg_str += f"\n **{sound}** - {h}:{m}:{s}"
+                    except:
+                        msg_str += f"\n **{sound}**"
                 await playMsg.edit(content=f"{msg_main} \n ***Queue:*** {msg_str}")
             except discord.NotFound:
                 pass
         else:
-            await ctx.response.send_message(msg_main)
-            playMsg = await ctx.original_response()
-            msg[ctx.guild_id] = playMsg
+            if isinstance(ctx, discord.Interaction):
+                await ctx.response.send_message(msg_main)
+                playMsg = await ctx.original_response()
+            else:
+                playMsg = await ctx.channel.send(msg_main)
 
-        try:
-            voice_client.play(audio_source, after=lambda e: after_played(voice_client, ctx))
-        except Exception as e:
-            print(e)
+            msg[ctx.guild_id] = playMsg
     else:
         await sendMessageWithExpiration(ctx, f"Added {filename} to queue", 5)
         playMsg = msg[ctx.guild_id]
@@ -156,6 +171,7 @@ async def leave(voice_client, ctx):
         playMsg = msg.get(ctx.guild_id)
         if playMsg:
             await playMsg.delete()
+            del msg[ctx.guild_id]
     else:
         print(f"Current ending sound {curr_sound}")
         next_sound = queue[0]
@@ -208,8 +224,14 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
     for i, (user_id, info) in enumerate(sorted_users[:top_n], start=1):
         money = info.get("Cash", 0)
         level = info.get("Level", 0)
-        user = await client.fetch_user(user_id)
-        leaderboardStr += f"**{i}.** {user.display_name} - {money} Cash Level {level}\n"
+        try:
+            user_id_int = int(user_id)
+            user = await client.fetch_user(user_id_int)
+            username = user.display_name
+        except Exception as e:
+            print(e)
+            username = f"Unknown {user_id}"
+        leaderboardStr += f"**{i}.** {username} - {money} Cash Level {level}\n"
 
     await ctx.response.send_message(f"**Leaderboard** \n\n{leaderboardStr}")
     msg = await ctx.original_response()
@@ -219,20 +241,20 @@ async def leaderboard(ctx, top_n: int = 10, sort: str = "Level"):
 @client.tree.command(name="work", description="Work for money", guild=GUILD_ID)
 async def work(interaction: discord.Interaction):
     checkExist(interaction.user.id)
-    incrementXp(interaction.user.id, 30)
-    user_id = str(interaction.user.id)
+    incrementXp(interaction, 30)
+    user_id_str = str(interaction.user.id)
     data = load_data()
 
     now_str = datetime.now().strftime('%y-%m-%d')
     now = datetime.strptime(now_str, '%y-%m-%d')
 
-    saved_date_str = data[user_id]["Work"]
+    saved_date_str = data[user_id_str]["Work"]
     saved_date = datetime.strptime(saved_date_str, '%y-%m-%d')
     if now > saved_date:
-        data[user_id]["Work"] = now_str
-        data[user_id]["Cash"] += 10 + 2 * data[user_id]["Level"]
+        data[user_id_str]["Work"] = now_str
+        data[user_id_str]["Cash"] += 10 + 2 * data[user_id_str]["Level"]
         save_data(data)
-        await interaction.response.send_message(f"You earned {10 + 2 * data[user_id]["Level"]} cash!", ephemeral=True)
+        await interaction.response.send_message(f"You earned {10 + 2 * data[user_id_str]["Level"]} cash!", ephemeral=True)
     else:
         await interaction.response.send_message("You have already worked today!", ephemeral=True)
 
@@ -260,28 +282,28 @@ async def angling(interaction: discord.Interaction, bait: app_commands.Choice[st
     j = 0
     match bait.value:
         case "nb":
-            fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[80000, 15000, 4900, 100-1, 1], k=1)[0]
+            fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_legendary, const.fish_fabled], weights=[80000, 15000, 4900, 100-1, 1], k=1)[0]
         case "bb":
-            if checkReq(interaction.user.id, 1, "Bait", "Basic Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[37000, 50000, 12000, 1000-2, 2], k=1)[0]
+            if checkReq(interaction.user.id, 1, "Bait", "Basic"):
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_legendary, const.fish_fabled], weights=[37000, 50000, 12000, 1000-2, 2], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
         case "ab":
-            if checkReq(interaction.user.id, 1, "Bait", "Advanced Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[21000, 42000, 31000, 3000-6, 6], k=1)[0]
+            if checkReq(interaction.user.id, 1, "Bait", "Advanced"):
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_legendary, const.fish_fabled], weights=[21000, 42000, 31000, 3000-6, 6], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
         case "mab":
-            if checkReq(interaction.user.id, 1, "Bait", "Master Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[10000-18, 40000, 40000, 10000, 18], k=1)[0]
+            if checkReq(interaction.user.id, 1, "Bait", "Master"):
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_legendary, const.fish_fabled], weights=[10000-18, 40000, 40000, 10000, 18], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
         case "myb":
-            if checkReq(interaction.user.id, 1, "Bait", "Mystery Bait"):
-                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_leg, const.fish_fab], weights=[2500, 2500, 10000, 80000, 5000], k=1)[0]
+            if checkReq(interaction.user.id, 1, "Bait", "Mystery"):
+                fish = random.choices([const.fish_common, const.fish_uncommon, const.fish_rare, const.fish_legendary, const.fish_fabled], weights=[2500, 2500, 10000, 80000, 5000], k=1)[0]
             else:
                 await sendMessageWithExpiration(interaction, "You have no bait", 10)
                 return
@@ -369,27 +391,74 @@ class ReelIn(View):
             data = load_data()
             user_id_str = str(self.user.id)
             rarity = self.fish_rarity.get(self.fish_state.fish_emoji, "Common")
-            incrementXp(interaction.user.id, 2)
+            match rarity:
+                case "Common":
+                    incrementXp(interaction, 2)
+                case "Uncommon":
+                    incrementXp(interaction, 5)
+                case "Rare":
+                    incrementXp(interaction, 10)
+                case "Legendary":
+                    incrementXp(interaction, 25)
+                case "Fabled":
+                    incrementXp(interaction, 100)
 
             data[user_id_str]["Fish"][rarity] += 1
 
             save_data(data)
         else:
             self.result = "Missed!"
-            incrementXp(interaction.user.id, 0.2)
+            incrementXp(interaction, 0.2)
             await interaction.edit_original_response(content="💨 The fish got away!", view=None)
+
+@client.tree.command(name="profile", description="Display profile information", guild=GUILD_ID)
+async def profile(interaction: discord.Interaction, user: discord.User = None):
+    if user:
+        user_id_str = str(user.id)
+        user_name = user.display_name
+    else:
+        user = interaction.user
+        user_id_str = str(interaction.user.id)
+        user_name = interaction.user.display_name
+
+    data = load_data()
+    checkExist(user_id_str)
+
+    icon_url = user.avatar
+
+    emb_title = f"**{user_name}**'s Profile"
+
+    cur_xp = round(data[user_id_str]["xp"])
+    req_xp = round((data[user_id_str]["Level"] + 1) * 10 + pow(2, math.log10(data[user_id_str]["Level"] + 1)))
+
+    emb_xp_bar = "["
+    i = 0
+    max = 100
+    for i in range(max):
+        if req_xp/100 * i <= cur_xp:
+            emb_xp_bar += "I"
+        else:
+            emb_xp_bar += ":"
+    emb_xp_bar += "]"
+
+    embed = discord.Embed(title=emb_title, color=discord.Colour.blue())
+
+    embed.set_image(url=f"{icon_url}")
+    embed.add_field(name=f"XP   Level: {data[user_id_str]["Level"]}", value=f"{cur_xp}/{req_xp} \n {emb_xp_bar}", inline=False)
+
+    await interaction.response.send_message(embed=embed, delete_after=20)
 
 @client.tree.command(name="inventory", description="Display a players inventory", guild=GUILD_ID)
 async def inventory(interaction: discord.Interaction, user: discord.User = None):
-    checkExist(interaction.user.id)
-    data = load_data()
-    
     if user:
         user_id_str = str(user.id)
         user_name = user.display_name
     else:
         user_id_str = str(interaction.user.id)
         user_name = interaction.user.display_name
+
+    data = load_data()
+    checkExist(user_id_str)
 
     emb_title = f"**{user_name}'s Inventory**"
 
@@ -406,7 +475,7 @@ async def inventory(interaction: discord.Interaction, user: discord.User = None)
         rar = getattr(const, f"bait_{bait.lower()}", const.bait_basic)
         emb_bait += f"\n{bait} {rar}: {num}"
     
-    embed.add_field(name=f"Cash {const.cash}:", value=f"{data[user_id_str]["Cash"]} ¢" or "None", inline=False)
+    embed.add_field(name=f"Cash {const.cash}:", value=f"{data[user_id_str]["Cash"]} {const.currency}" or "None", inline=False)
     embed.add_field(name="\n\n ***Fish:***", value=emb_fish or "None", inline=True)
     embed.add_field(name="\n\n ***Bait:***", value=emb_bait or "None", inline=True)
 
@@ -464,26 +533,26 @@ async def roulette(interaction, bet_color, amount):
     if bet_color.value == "green" and win_emoji == "🟩":
         win = amount * 17
         updateMoney(interaction.user.id, win)
-        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} {const.currency} :D", win + 10)
     elif bet_color.value == "red" and win_emoji == "🟥":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} {const.currency} :D", win + 10)
     elif bet_color.value == "black" and win_emoji == "⬛":
         win = amount * 2
         updateMoney(interaction.user.id, win)
-        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+        await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} {const.currency} :D", win + 10)
     elif bet_color.value == "purple" and win_emoji == "🟪":
         rand = random.choices([0, 0.5, 2, 25, 75], weights=[20, 20, 25, 20, 15], k=1)[0]
         win = amount * rand
         updateMoney(interaction.user.id, win)
         match rand:
             case 0:
-                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash D:", win + 10)
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} {const.currency} D:", win + 10)
             case 0.5:
-                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} got {win} back :I", win + 10)
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} got {win} {const.currency} back :I", win + 10)
             case _:
-                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} cash :D", win + 10)
+                await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} won {win} {const.currency} :D", win + 10)
     else:
         await editMessageWithExpiration(msg, f"You bet {amount} on {bet_color.value} and lost :(", amount + 10)
 
@@ -511,14 +580,15 @@ async def shop(interaction: discord.Interaction):
 class ActionSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Buy", description="Purchase items"),
-            discord.SelectOption(label="Sell", description="Sell items")
+            discord.SelectOption(label="Buy", description="But items"),
+            discord.SelectOption(label="Sell", description="Sell items"),
+            discord.SelectOption(label="Upgrade", description="Upgrade profile items")
         ]
-        super().__init__(placeholder="Buy or Sell?", options=options)
+        super().__init__(placeholder="Buy, sell or upgrade?", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         action = self.values[0]
-        await interaction.response.edit_message(content=f"You chose to **{action}**. Now select category:", view=CategorySelectView(action))
+        await interaction.response.edit_message(content=f"You chose to **{action}**. Now select category:", view=CategorySelectView(action, interaction))
 
 class ActionSelectView(discord.ui.View):
     def __init__(self):
@@ -526,54 +596,104 @@ class ActionSelectView(discord.ui.View):
         self.add_item(ActionSelect())
 
 class CategorySelect(discord.ui.Select):
-    def __init__(self, action):
+    def __init__(self, action, interaction):
         self.action = action
+
+        data = load_data()
+        user_id_str = str(interaction.user.id)
 
         available_categories = {
             "Buy": ["Bait"],
-            "Sell": ["Fish"]
+            "Sell": ["Fish"],
+            "Upgrade": ["Rod"]
         }
 
-        options = [
-            discord.SelectOption(label=cat, description=f"{action} {cat.lower()}")
-            for cat in available_categories.get(action, [])
-        ]
+        if action != "Upgrade":
+            options = [
+                discord.SelectOption(
+                    label=cat, 
+                    description=f"{action} {cat.lower()}")
+                for cat in available_categories.get(action, [])
+            ]
+        else:
+            options = [
+                discord.SelectOption(
+                    label=f"{cat}: {const.shop_items.get("Upgrade", {}).get(cat)}{const.currency}", 
+                    value = cat,
+                    description=f"{action} {cat.lower()}" + ("" if data[user_id_str]["Cash"] >= const.shop_items.get("Upgrade", {}).get(cat) else " (Can't afford)"))
+                for cat in available_categories.get(action, [])
+            ]
 
         super().__init__(placeholder="Choose a category...", options = options)
 
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
-        await interaction.response.edit_message(content=f"You selected **{category}**. Now choose an item to {self.action.lower()}:", view = ItemSelectView(self.action, category))
+        data = load_data()
+        user_id_str = str(interaction.user.id)
+
+        if self.action != "Upgrade":
+            await interaction.response.edit_message(content=f"You selected **{category}**. Now choose an item to {self.action.lower()}:", view=ItemSelectView(self.action, category, interaction))
+        else:
+            user_id_str = str(interaction.user.id)
+            if checkReq(user_id_str, const.shop_items.get("Upgrade", {}).get(category), "Cash"):
+                await interaction.response.edit_message(content=f"You chose to **{self.action}ed** your **{category}**.", view=None)
+                data = load_data()
+                data[user_id_str]["Rod_Level"] += 1
+                save_data(data)
+            else:
+                await interaction.response.edit_message(content=f"You do not have enough {const.currency} to {self.action} your **{category}**.", view=None)
 
 class CategorySelectView(discord.ui.View):
-    def __init__(self, action):
+    def __init__(self, action, interaction):
         super().__init__(timeout=30)
-        self.add_item(CategorySelect(action))
+        self.add_item(CategorySelect(action, interaction))
 
 class ItemSelect(discord.ui.Select):
-    def __init__(self, action, category):
+    def __init__(self, action, category, interaction):
         self.action = action
         self.category = category
 
+        data = load_data()
+        user_id_str = str(interaction.user.id)
+
+        if self.action in ["Buy", "Sell"]:
+            cat_data = const.shop_items.get(self.action, {})
+            cat_items = cat_data.get(self.category, {})
+
+            if isinstance(cat_items, dict):
+                items = cat_items
+            elif isinstance(cat_items, int):
+                items = {self.category: cat_items}
+            else:
+                items = {}
+
         if self.action == "Buy":
-            items = const.shop_items.get('Buy', {}).get(self.category, {})
+            options = [
+                discord.SelectOption(
+                    label = item_name,
+                    description = f"Cost: {price}¢" + ("" if data[user_id_str]["Cash"] >= price else " (Can't afford)"),
+                    value = item_name
+                )
+                for item_name, price in items.items()
+            ]
         elif self.action == "Sell":
-            items = const.shop_items.get('Sell', {}).get(self.category, {})
-        else:
-            items = {}
-
-        options = [discord.SelectOption(
-            label = item_name,
-            description = f"{'Cost' if action == "Buy" else 'Sell for'}: {price} cash",
-            value = item_name
+            options = [discord.SelectOption(
+                label = item_name,
+                description = f"Sell price: {price}¢",
+                value = item_name
             )
-            for item_name, price in items.items() if item_name != "Fabled"
-        ]
+            for item_name, price in items.items() if item_name != "Fabled" and data[user_id_str][self.category].get(item_name, 0) > 0
+            ]
 
-        if self.action == "Sell" and self.category == "Fish":
+        if self.action == "Sell" and self.category == "Fish" and data[user_id_str]["Fish"].get("Fabled", 0) > 0:
             options.append(discord.SelectOption(label="???", description="Sell ??? for ???", value="Fabled"))
 
-        super().__init__(placeholder="Choose an item...", options=options)
+        disabled = False
+        if not options:
+            options = [discord.SelectOption(label="No items available", description="Try again later.", value="none")]
+            disabled= True
+
+        super().__init__(placeholder=f"{"Choose an item..." if not disabled else "No items available"}", options=options, disabled=disabled)
 
     async def callback(self, interaction: discord.Interaction):
         selected_item = self.values[0]
@@ -583,9 +703,9 @@ class ItemSelect(discord.ui.Select):
         await interaction.response.edit_message(content=f"You wish to {self.action.lower()} **{selected_item}**. How many would you like to {self.action.lower()}?", view = QuantitySelectView(action, category, selected_item, interaction.user.id))
 
 class ItemSelectView(discord.ui.View):
-    def __init__(self, action, category):
+    def __init__(self, action, category, interaction):
         super().__init__(timeout=30)
-        self.add_item(ItemSelect(action, category))
+        self.add_item(ItemSelect(action, category, interaction))
 
 class QuantitySelect(discord.ui.Select):
     def __init__(self, action, category, item, user_id):
@@ -807,7 +927,7 @@ def checkExist(user_id: int):
     data = load_data()
     user_id_str = str(user_id)
 
-    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0, "Fabled": 0}, "Bait": {"Basic": 0, "Advanced": 0, "Master": 0, "Mystery": 0}}
+    default_data = {"Cash": 10, "Level":0, "xp": 0, "Work": "00-01-01", "Rod_Level": 1, "Fish": {"Common": 0, "Uncommon": 0, "Rare": 0, "Legendary": 0, "Fabled": 0}, "Bait": {"Basic": 0, "Advanced": 0, "Master": 0, "Mystery": 0}}
 
     if user_id_str not in data:
         data[user_id_str] = default_data
@@ -821,14 +941,18 @@ def checkExist(user_id: int):
                         data[user_id_str][key][sub_key] = sub_value
     save_data(data)
 
-def incrementXp(id, amount):
+def incrementXp(interaction, amount):
+    if isinstance(interaction, discord.Interaction):
+        id = str(interaction.user.id)
+    elif isinstance(interaction, discord.Message):
+        id = str(interaction.author.id)
     checkExist(id)
     data = load_data()
     user_id_str = str(id)
 
     data[user_id_str]["xp"] += amount
 
-    return checkLevelup(id, data)
+    save_data(data)
 
 def checkReq(id, req, check_str, sub_key = None):
     data = load_data()
@@ -857,20 +981,21 @@ def updateMoney(id, amount):
 
     save_data(data)
 
-def checkLevelup(id, data):
-    user_id_str = str(id)
+def checkLevelup(interaction, data):
+    user_id_str = str(interaction.user.id)
     reqXp = (data[user_id_str]["Level"] + 1) * 10 + pow(2, math.log10(data[user_id_str]["Level"] + 1))
-    level_up = False
     level = data[user_id_str]["Level"]
-    while data[user_id_str]["xp"] >= reqXp:
+    if data[user_id_str]["xp"] >= reqXp:
         data[user_id_str]["xp"] -= reqXp
         data[user_id_str]["Level"] += 1
-        level_up = True
         level = data[user_id_str]["Level"]
 
     save_data(data)
 
-    return level_up, level
+    if isinstance(interaction, discord.Interaction):
+        interaction.response.send_message(f'{interaction.user.display_name} Level up to {level}')
+    elif isinstance(interaction, discord.Message):
+        interaction.send(f'{interaction.user.display_name} Level up to {level}')
 
 def load_data():
     if not os.path.exists(const.data_file):
